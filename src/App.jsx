@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
+import './index.css';
 import detectEthereumProvider from '@metamask/detect-provider';
 import CharityTrust from '../artifacts/contracts/CharityTrust.sol/CharityTrust.json';
 
@@ -138,27 +139,41 @@ function App() {
   };
 
   const connectWallet = async () => {
-    try {
-      // Check if MetaMask is installed
-      if (typeof window.ethereum === 'undefined') {
-        alert('Please install MetaMask to use this application');
-        return;
+      try {
+          // Check if MetaMask is installed
+          if (typeof window.ethereum === 'undefined') {
+              alert('Please install MetaMask to use this application');
+              return;
+          }
+  
+          try {
+              // Simply request accounts - this will trigger MetaMask popup
+              const accounts = await window.ethereum.request({
+                  method: 'eth_requestAccounts'
+              });
+              
+              if (accounts && accounts.length > 0) {
+                  setAccount(accounts[0]);
+                  await initializeEthereum();
+              }
+              
+          } catch (error) {
+              if (error.code === 4001) {
+                  // User rejected the request
+                  console.log('Please connect your wallet to continue');
+              } else {
+                  throw error;
+              }
+          }
+          
+      } catch (error) {
+          console.error('Error connecting wallet:', error);
+          alert('Error connecting to MetaMask: ' + error.message);
+          setAccount(''); // Reset account if connection fails
+      } finally {
+          setLoading(false);
       }
-
-      console.log('Requesting account access...');
-      const accounts = await window.ethereum.request({
-        method: 'eth_requestAccounts'
-      });
-      console.log('Accounts:', accounts);
-      
-      setAccount(accounts[0]);
-      // Initialize contract after connecting
-      await initializeEthereum();
-    } catch (error) {
-      console.error('Error connecting wallet:', error);
-      alert('Error connecting to MetaMask: ' + error.message);
-    }
-};
+  };
 
   const updateProgress = async () => {
     if (contract) {
@@ -312,8 +327,15 @@ function App() {
 
     try {
       setLoading(true);
+      // First check if beneficiary exists
+      const beneficiary = await contract.beneficiaries(address);
+      if (!beneficiary.wallet) {
+          throw new Error('Beneficiary does not exist');
+      }
+      
       const tx = await contract.verifyBeneficiary(address);
       await tx.wait();
+      
       alert('Beneficiary verified successfully!');
     } catch (error) {
       console.error('Error verifying beneficiary:', error);
@@ -324,27 +346,45 @@ function App() {
   };
 
   const handleDistributeFunds = async (e) => {
-    e.preventDefault();
-    if (!contract || !beneficiaryAddress || !distributionAmount || !isAdmin) return;
-
-    try {
-      setLoading(true);
-      const amountInWei = ethers.utils.parseEther(distributionAmount.toString());
-      const tx = await contract.distributeFunds(beneficiaryAddress, amountInWei);
-      await tx.wait();
-      
-      await Promise.all([
-        updateProgress(),
-        fetchWithdrawalHistory()  // Add this line
-      ]);
-      setDistributionAmount('');
-      alert('Funds distributed successfully!');
-    } catch (error) {
-      console.error('Error distributing funds:', error);
-      alert('Error distributing funds: ' + (error.message || 'Unknown error'));
-    } finally {
-      setLoading(false);
-    }
+      e.preventDefault();
+      if (!contract || !beneficiaryAddress || !distributionAmount || !isAdmin) return;
+  
+      try {
+          setLoading(true);
+          
+          // First verify the beneficiary exists and is valid
+          const beneficiary = await contract.beneficiaries(beneficiaryAddress);
+          if (!beneficiary.wallet) {
+              throw new Error('Invalid beneficiary address');
+          }
+          
+          // Convert the amount to Wei
+          const amountInWei = ethers.utils.parseEther(distributionAmount.toString());
+          
+          // Get contract balance to ensure sufficient funds
+          const balance = await contract.provider.getBalance(contract.address);
+          if (balance.lt(amountInWei)) {
+              throw new Error('Insufficient contract balance for distribution');
+          }
+          
+          // Distribute the funds
+          const tx = await contract.distributeFunds(beneficiaryAddress, amountInWei);
+          await tx.wait();
+          
+          // Update UI
+          await Promise.all([
+              updateProgress(),
+              fetchWithdrawalHistory()
+          ]);
+          
+          setDistributionAmount('');
+          alert('Funds distributed successfully!');
+      } catch (error) {
+          console.error('Error distributing funds:', error);
+          alert('Error distributing funds: ' + (error.message || 'Unknown error'));
+      } finally {
+          setLoading(false);
+      }
   };
 
   // Add this new function to initialize read-only contract
@@ -388,231 +428,183 @@ function App() {
   }, []);
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <h1 className="text-4xl font-bold mb-8">Transparent Donation Tracking DApp</h1>
-      
-      {/* Show progress before wallet connection */}
-      <div className="mb-8">
-        <div className="mt-4">
-          <p>Progress: {progress.current} ETH / {progress.goal} ETH</p>
-          <div className="w-full bg-gray-200 rounded-full h-2.5">
-            <div
-              className="bg-blue-600 h-2.5 rounded-full"
-              style={{
-                width: `${(progress.current / progress.goal) * 100}%`
-              }}
+    <div className="container">
+      <header className="header">
+        <h1>Transparent Donation Tracking DApp</h1>
+      </header>
+
+      <div className="card">
+        <button className="button" onClick={connectWallet} disabled={loading}>
+          {account ? `Connected: ${account.substring(0, 6)}...${account.substring(38)}` : 'Connect Wallet'}
+        </button>
+      </div>
+
+      <div className="grid">
+        <div className="card">
+          <h2>Donation Progress</h2>
+          <div className="progress-container">
+            <div 
+              className="progress-bar" 
+              style={{ width: `${(progress.current / progress.goal) * 100}%` }}
             ></div>
           </div>
+          <p>{progress.current} ETH of {progress.goal} ETH raised</p>
         </div>
-      </div>
 
-      {!account ? (
-        <button
-          onClick={connectWallet}
-          className="bg-blue-500 text-white px-4 py-2 rounded mt-8"
-        >
-          Connect Wallet to Donate
-        </button>
-      ) : (
-        <>
-          <div className="mb-8">
-            <p>Connected Account: {account}</p>
-          </div>
-
-          <form onSubmit={handleDonate} className="max-w-md">
-            <div className="mb-4">
-              <label className="block mb-2">Donation Amount (ETH)</label>
-              <input
-                type="number"
-                step="0.01"
-                value={donationAmount}
-                onChange={(e) => setDonationAmount(e.target.value)}
-                className="w-full p-2 border rounded"
-                required
-              />
-            </div>
-            
-            <div className="mb-4">
-              <label className="block mb-2">Message (Optional)</label>
-              <textarea
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                className="w-full p-2 border rounded"
-                rows="3"
-              ></textarea>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="bg-green-500 text-white px-4 py-2 rounded disabled:opacity-50"
-            >
-              {loading ? 'Processing...' : 'Donate'}
+        <div className="card">
+          <h2>Make a Donation</h2>
+          <form onSubmit={handleDonate} className="form-group">
+            <label className="form-label">Amount (ETH)</label>
+            <input
+              type="number"
+              className="form-input"
+              value={donationAmount}
+              onChange={(e) => setDonationAmount(e.target.value)}
+              step="0.01"
+            />
+            <label className="form-label">Message</label>
+            <input
+              type="text"
+              className="form-input"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+            />
+            <button type="submit" className="button" disabled={loading}>
+              Donate
             </button>
           </form>
-
-          {isAdmin && (
-            <>
-              <div className="mt-8">
-                <h2 className="text-2xl font-bold mb-4">Update Fundraising Goal</h2>
-                <form onSubmit={handleUpdateGoal} className="max-w-md">
-                  <div className="mb-4">
-                    <label className="block mb-2">New Goal (ETH)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={newGoal}
-                      onChange={(e) => setNewGoal(e.target.value)}
-                      className="w-full p-2 border rounded"
-                      required
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="bg-blue-500 text-white px-4 py-2 rounded disabled:opacity-50"
-                  >
-                    {loading ? 'Processing...' : 'Update Goal'}
-                  </button>
-                </form>
-              </div>
-
-              <div className="mt-8">
-                <h2 className="text-2xl font-bold mb-4">Withdraw Funds (Admin Only)</h2>
-                <form onSubmit={handleWithdraw} className="max-w-md">
-                  <div className="mb-4">
-                    <label className="block mb-2">Withdrawal Amount (ETH)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={withdrawAmount}
-                      onChange={(e) => setWithdrawAmount(e.target.value)}
-                      className="w-full p-2 border rounded"
-                      required
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="bg-red-500 text-white px-4 py-2 rounded disabled:opacity-50"
-                  >
-                    {loading ? 'Processing...' : 'Withdraw'}
-                  </button>
-                </form>
-              </div>
-
-              <div className="mt-8">
-                <h2 className="text-2xl font-bold mb-4">Manage Beneficiaries (Admin Only)</h2>
-                <form onSubmit={handleAddBeneficiary} className="max-w-md mb-8">
-                  <div className="mb-4">
-                    <label className="block mb-2">Beneficiary Address</label>
-                    <input
-                      type="text"
-                      value={beneficiaryAddress}
-                      onChange={(e) => setBeneficiaryAddress(e.target.value)}
-                      className="w-full p-2 border rounded"
-                      required
-                    />
-                  </div>
-                  <div className="mb-4">
-                    <label className="block mb-2">Beneficiary Name</label>
-                    <input
-                      type="text"
-                      value={beneficiaryName}
-                      onChange={(e) => setBeneficiaryName(e.target.value)}
-                      className="w-full p-2 border rounded"
-                      required
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="bg-blue-500 text-white px-4 py-2 rounded disabled:opacity-50"
-                  >
-                    {loading ? 'Processing...' : 'Add Beneficiary'}
-                  </button>
-                </form>
-
-                <form onSubmit={handleDistributeFunds} className="max-w-md">
-                  <div className="mb-4">
-                    <label className="block mb-2">Distribution Amount (ETH)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={distributionAmount}
-                      onChange={(e) => setDistributionAmount(e.target.value)}
-                      className="w-full p-2 border rounded"
-                      required
-                    />
-                  </div>
-                  <div className="mb-4">
-                    <label className="block mb-2">Beneficiary Address</label>
-                    <input
-                      type="text"
-                      value={beneficiaryAddress}
-                      onChange={(e) => setBeneficiaryAddress(e.target.value)}
-                      className="w-full p-2 border rounded"
-                      required
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="bg-green-500 text-white px-4 py-2 rounded disabled:opacity-50 mr-2"
-                  >
-                    {loading ? 'Processing...' : 'Distribute Funds'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleVerifyBeneficiary(beneficiaryAddress)}
-                    disabled={loading}
-                    className="bg-yellow-500 text-white px-4 py-2 rounded disabled:opacity-50"
-                  >
-                    {loading ? 'Processing...' : 'Verify Beneficiary'}
-                  </button>
-                </form>
-              </div>
-            </>
-          )}
-        </>
-      )}
-
-      {/* Move donation history to bottom */}
-      {/* Recent Donations section */}
-      <div className="mt-12 border-t pt-8">
-        <h2 className="text-2xl font-bold mb-4">Recent Donations</h2>
-        <div className="space-y-4">
-          {donations.map((donation, index) => (
-            <div key={index} className="bg-gray-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-600">From: {donation.donor}</p>
-              <p className="font-bold">{donation.amount} ETH</p>
-              {donation.message && (
-                <p className="text-gray-700 mt-2">"{donation.message}"</p>
-              )}
-              <p className="text-sm text-gray-500">{donation.timestamp}</p>
-            </div>
-          ))}
         </div>
       </div>
 
-      {/* After the Recent Donations section */}
-      <div className="mt-12 border-t pt-8">
-        <h2 className="text-2xl font-bold mb-4">Distribution History</h2>
-        <div className="space-y-4">
-          {withdrawalHistory.map((withdrawal, index) => (
-            <div key={index} className="bg-gray-50 p-4 rounded-lg shadow">
-              <p className="text-sm text-gray-600">Beneficiary: {withdrawal.beneficiary}</p>
-              <p className="font-bold text-green-600">{withdrawal.amount} ETH</p>
-              <p className="text-sm text-gray-500">Distributed on: {withdrawal.timestamp}</p>
+      {isAdmin && (
+        <div className="admin-section">
+          {/* Add Update Goal Form */}
+          <div className="card">
+            <h3>Update Fundraising Goal</h3>
+            <form onSubmit={handleUpdateGoal} className="form-group">
+              <label className="form-label">New Goal (ETH)</label>
+              <input
+                type="number"
+                className="form-input"
+                value={newGoal}
+                onChange={(e) => setNewGoal(e.target.value)}
+                step="0.01"
+                placeholder="Enter new goal amount"
+              />
+              <button type="submit" className="button" disabled={loading}>
+                Update Goal
+              </button>
+            </form>
+          </div>
+
+          {/* Add Beneficiary Form */}
+          <div className="card">
+            <h3>Add Beneficiary</h3>
+            <form onSubmit={handleAddBeneficiary} className="form-group">
+              <label className="form-label">Beneficiary Address</label>
+              <input
+                type="text"
+                className="form-input"
+                value={beneficiaryAddress}
+                onChange={(e) => setBeneficiaryAddress(e.target.value)}
+                placeholder="Enter beneficiary address"
+              />
+              <label className="form-label">Beneficiary Name</label>
+              <input
+                type="text"
+                className="form-input"
+                value={beneficiaryName}
+                onChange={(e) => setBeneficiaryName(e.target.value)}
+                placeholder="Enter beneficiary name"
+              />
+              <button type="submit" className="button" disabled={loading}>
+                Add Beneficiary
+              </button>
+            </form>
+          </div>
+
+          {/* Verify Beneficiary Form */}
+          <div className="card">
+            <h3>Verify Beneficiary</h3>
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              handleVerifyBeneficiary(beneficiaryAddress);
+            }} className="form-group">
+              <label className="form-label">Beneficiary Address</label>
+              <input
+                type="text"
+                className="form-input"
+                value={beneficiaryAddress}
+                onChange={(e) => setBeneficiaryAddress(e.target.value)}
+                placeholder="Enter beneficiary address to verify"
+              />
+              <button type="submit" className="button" disabled={loading}>
+                Verify Beneficiary
+              </button>
+            </form>
+          </div>
+
+          {/* Existing Distribute Funds Form */}
+          <div className="card">
+            <h3>Distribute Funds</h3>
+            <form onSubmit={handleDistributeFunds} className="form-group">
+                <label className="form-label">Beneficiary Address</label>
+                <input
+                    type="text"
+                    className="form-input"
+                    value={beneficiaryAddress}
+                    onChange={(e) => setBeneficiaryAddress(e.target.value)}
+                />
+                <label className="form-label">Amount (ETH)</label>
+                <input
+                    type="number"
+                    className="form-input"
+                    value={distributionAmount}
+                    onChange={(e) => setDistributionAmount(e.target.value)}
+                    step="0.01"
+                />
+                <button type="submit" className="button" disabled={loading}>
+                    Distribute Funds
+                </button>
+            </form>
+        </div>
+      </div>
+      )}
+
+      <div className="history-section">
+        <div className="grid">
+          {/* Beneficiary Distributions History */}
+          <div className="card">
+            <h2>Beneficiary Distributions History</h2>
+            <div className="history-list">
+              {withdrawalHistory.map((withdrawal, index) => (
+                <div key={index} className="history-item">
+                  <p><strong>Beneficiary:</strong> {withdrawal.beneficiary}</p>
+                  <p><strong>Amount:</strong> {withdrawal.amount} ETH</p>
+                  <p><strong>Time:</strong> {withdrawal.timestamp}</p>
+                </div>
+              ))}
             </div>
-          ))}
-          {withdrawalHistory.length === 0 && (
-            <p className="text-gray-500 italic">No distributions have been made yet.</p>
-          )}
+          </div>
+
+          {/* Donations History */}
+          <div className="card">
+            <h2>Donations History</h2>
+            <div className="history-list">
+              {donations.map((donation, index) => (
+                <div key={index} className="history-item">
+                  <p><strong>Donor:</strong> {donation.donor}</p>
+                  <p><strong>Amount:</strong> {donation.amount} ETH</p>
+                  <p><strong>Message:</strong> {donation.message}</p>
+                  <p><strong>Time:</strong> {donation.timestamp}</p>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>
-  );
+);
 }
 
 export default App;

@@ -22,6 +22,8 @@ contract CharityTrust is ReentrancyGuard, Pausable, Ownable {
     uint256 public totalDonations;
     Donation[] public donations;
     mapping(address => Beneficiary) public beneficiaries;
+    mapping(address => uint256) public beneficiaryBalances;
+    mapping(address => uint256) public adminWithdrawals;  // Add this line to track admin withdrawals
     
     event DonationReceived(address indexed donor, uint256 amount, string message, uint256 timestamp);
     event FundraisingGoalUpdated(uint256 newGoal);
@@ -76,11 +78,27 @@ contract CharityTrust is ReentrancyGuard, Pausable, Ownable {
     function distributeFunds(address payable _beneficiary, uint256 _amount) external onlyOwner nonReentrant {
         require(beneficiaries[_beneficiary].isVerified, "Beneficiary not verified");
         require(_amount <= address(this).balance, "Insufficient contract balance");
+        require(_amount > 0, "Amount must be greater than 0");
         
         (bool success, ) = _beneficiary.call{value: _amount}("");
         require(success, "Transfer failed");
         
+        // Update balances after successful transfer
+        totalDonations -= _amount;
+        beneficiaryBalances[_beneficiary] += _amount;
+        adminWithdrawals[owner()] += _amount;
+        
         emit FundsDistributed(_beneficiary, _amount);
+    }
+
+    // Add function to check admin's total withdrawals
+    function getAdminWithdrawals() external view returns (uint256) {
+        return adminWithdrawals[owner()];
+    }
+
+    // Add a function to check beneficiary's received amount
+    function getBeneficiaryBalance(address _beneficiary) external view returns (uint256) {
+        return beneficiaryBalances[_beneficiary];
     }
 
     function pauseDonations() external onlyOwner {
