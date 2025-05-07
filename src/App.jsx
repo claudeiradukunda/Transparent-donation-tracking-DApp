@@ -91,7 +91,7 @@ function App() {
 
         const ethersProvider = new ethers.providers.Web3Provider(window.ethereum);
         const signer = ethersProvider.getSigner();
-        const contractAddress = '0x5FbDB2315678afecb367f032d93F642f64180aa3';
+        const contractAddress = '0x9E545E3C0baAB3E08CdfD552C960A1050f373042';
         
         console.log('Creating contract instance...');
         const charityContract = new ethers.Contract(
